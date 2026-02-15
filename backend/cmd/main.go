@@ -13,10 +13,16 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+
+	"github.com/joho/godotenv"
 )
 
 func main() {
 	ctx := context.Background()
+	err := godotenv.Load()
+	if err != nil {
+		log.Fatal("error to load configs:", err)
+	}
 	lkCfg, err := livekit.NewLiveKitConfig()
 	if err != nil {
 		log.Fatal("error to load configs:", err)

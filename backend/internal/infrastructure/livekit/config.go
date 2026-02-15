@@ -5,7 +5,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/joho/godotenv"
 	"github.com/livekit/protocol/auth"
 )
 
@@ -20,17 +19,9 @@ var (
 )
 
 func NewLiveKitConfig() (*LiveKitConfig, error) {
-	err := godotenv.Load()
-	if err != nil {
-		return nil, err
-	}
 	url := os.Getenv("LIVEKIT_URL")
 	secret := os.Getenv("LIVEKIT_API_SECRET")
 	apiKey := os.Getenv("LIVEKIT_API_KEY")
-
-	if url == "" || secret == "" || apiKey == "" {
-		return nil, ErrNoDataInEnv
-	}
 	return &LiveKitConfig{
 		ApiKey:    apiKey,
 		ApiSecret: secret,
