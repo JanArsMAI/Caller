@@ -1,9 +1,8 @@
 package client
 
 import (
-	"log"
-
 	"github.com/gorilla/websocket"
+	"go.uber.org/zap"
 )
 
 type Client struct {
@@ -12,6 +11,7 @@ type Client struct {
 	Send      chan []byte
 	Room      string
 	UserAgent string
+	Logger    *zap.Logger
 }
 
 func (c *Client) ReadPump(broadcast func([]byte, string)) {
@@ -23,7 +23,7 @@ func (c *Client) ReadPump(broadcast func([]byte, string)) {
 		_, message, err := c.Conn.ReadMessage()
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				log.Printf("error: %v", err)
+				c.Logger.Error("error: %v", zap.Error(err))
 			}
 			break
 		}

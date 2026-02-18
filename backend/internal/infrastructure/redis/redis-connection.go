@@ -1,19 +1,20 @@
 package redisrepo
 
 import (
-	"os"
+	"JanArsMAI/Caller/internal/config"
+	"fmt"
 
 	"github.com/redis/go-redis/v9"
 )
 
-func NewRedisConnection() *redis.Client {
-	addr := os.Getenv("REDIS_ADDR")
-	if addr == "" {
+func NewRedisConnection(cfg *config.RedisConfig) *redis.Client {
+	if cfg.Host == "" {
 		return nil
 	}
+	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
 	return redis.NewClient(&redis.Options{
 		Addr:     addr,
-		Password: "",
-		DB:       0,
+		Password: cfg.Password,
+		DB:       cfg.DB,
 	})
 }

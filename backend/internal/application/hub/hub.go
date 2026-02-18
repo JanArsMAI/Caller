@@ -2,12 +2,14 @@ package hub
 
 import (
 	"JanArsMAI/Caller/internal/application/client"
-	"JanArsMAI/Caller/internal/infrastructure/livekit"
+	"JanArsMAI/Caller/internal/config"
+
 	redisrepo "JanArsMAI/Caller/internal/infrastructure/redis"
 	"context"
 	"encoding/json"
-	"log"
 	"time"
+
+	"go.uber.org/zap"
 )
 
 type BroadcastMsg struct {
@@ -21,15 +23,16 @@ type Hub struct {
 	Register    chan *client.Client
 	Unregister  chan *client.Client
 	Broadcast   chan BroadcastMsg
-	LiveKitCfg  *livekit.LiveKitConfig
+	LiveKitCfg  *config.LiveKitConfig
 	quit        chan struct{}
+	Logger      *zap.Logger
 
 	redisRepo *redisrepo.RedisRepo
 	ctx       context.Context
 	cancel    context.CancelFunc
 }
 
-func NewHub(cfg *livekit.LiveKitConfig, cl *redisrepo.RedisRepo) *Hub {
+func NewHub(cfg *config.LiveKitConfig, cl *redisrepo.RedisRepo, lg *zap.Logger) *Hub {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &Hub{
@@ -42,6 +45,7 @@ func NewHub(cfg *livekit.LiveKitConfig, cl *redisrepo.RedisRepo) *Hub {
 		redisRepo:   cl,
 		ctx:         ctx,
 		cancel:      cancel,
+		Logger:      lg,
 	}
 }
 
@@ -59,24 +63,24 @@ func (h *Hub) Run() {
 			}
 
 			if err := h.redisRepo.AddClient(h.ctx, info); err != nil {
-				log.Printf("Failed to save client to Redis: %v", err)
+				h.Logger.Error("Failed to save client to Redis: %v", zap.Error(err))
 			}
 			h.connections[cl.ID] = cl
-			log.Printf("client %s joined room %s", cl.ID, cl.Room)
+			h.Logger.Info("client joined room", zap.String("id", cl.ID), zap.String("room", cl.Room))
 			h.sendLiveKitToken(cl)
 
 		case cl := <-h.Unregister:
 			if err := h.redisRepo.RemoveClient(h.ctx, cl.ID); err != nil {
-				log.Printf("Failed to remove client from Redis: %v", err)
+				h.Logger.Error("Failed to remove client from Redis: %v", zap.Error(err))
 			}
 			delete(h.connections, cl.ID)
 			close(cl.Send)
-			log.Printf("client %s left room %s", cl.ID, cl.Room)
+			h.Logger.Info("client left room", zap.String("id", cl.ID), zap.String("room", cl.Room))
 
 		case msg := <-h.Broadcast:
 			var originalMsg map[string]any
 			if err := json.Unmarshal(msg.Message, &originalMsg); err != nil {
-				log.Printf("Failed to parse message: %v", err)
+				h.Logger.Error("Failed to parse message: %v", zap.Error(err))
 				continue
 			}
 
@@ -96,12 +100,12 @@ func (h *Hub) Run() {
 				Timestamp: time.Now(),
 			}
 			if err := h.redisRepo.PublishMessage(h.ctx, msg.RoomID, redisMsg); err != nil {
-				log.Printf("Failed to publish message: %v", err)
+				h.Logger.Error("Failed to publish message: %v", zap.Error(err))
 			}
 			_ = h.redisRepo.SaveMessage(h.ctx, msg.RoomID, redisMsg)
 
 		case <-h.quit:
-			log.Println("Stopping hub...")
+			h.Logger.Info("Stopping hub...")
 			h.cancel()
 
 			for _, cl := range h.connections {
@@ -122,7 +126,7 @@ func (h *Hub) listenToRedis() {
 		case msg := <-ch:
 			var redisMsg redisrepo.Message
 			if err := json.Unmarshal([]byte(msg.Payload), &redisMsg); err != nil {
-				log.Printf("Failed to parse Redis message: %v", err)
+				h.Logger.Error("Failed to parse Redis message: %v", zap.Error(err))
 				continue
 			}
 			for _, cl := range h.connections {
@@ -134,7 +138,7 @@ func (h *Hub) listenToRedis() {
 					select {
 					case cl.Send <- []byte(msg.Payload):
 					default:
-						log.Printf("client %s slow, dropping message", cl.ID[:8])
+						h.Logger.Error("client slow, dropping message", zap.String("id", cl.ID[:8]))
 					}
 				}
 			}
@@ -152,7 +156,7 @@ func (h *Hub) sendLiveKitToken(cl *client.Client) {
 
 	token, err := h.LiveKitCfg.GenerateToken(cl.Room, cl.ID)
 	if err != nil {
-		log.Printf("Failed to generate LiveKit token: %v", err)
+		h.Logger.Error("Failed to generate LiveKit token: %v", zap.Error(err))
 		return
 	}
 
@@ -168,9 +172,9 @@ func (h *Hub) sendLiveKitToken(cl *client.Client) {
 
 	select {
 	case cl.Send <- tokenData:
-		log.Printf("LiveKit token sent to %s", cl.ID[:8])
+		h.Logger.Info("LiveKit token sent to", zap.String("id", cl.ID[:8]))
 	default:
-		log.Printf("Client %s slow, dropping token", cl.ID[:8])
+		h.Logger.Error("Client slow, dropping token", zap.String("id", cl.ID[:8]))
 	}
 }
 
@@ -185,7 +189,7 @@ func (h *Hub) BroadcastToRoom(message []byte, roomID string) {
 				ClientID: clientID,
 			}:
 			default:
-				log.Printf("Broadcast channel full for room %s", roomID[:8])
+				h.Logger.Warn("Broadcast channel full for room", zap.String("room", roomID[:8]))
 			}
 			return
 		}
@@ -197,7 +201,7 @@ func (h *Hub) BroadcastToRoom(message []byte, roomID string) {
 		ClientID: "system",
 	}:
 	default:
-		log.Printf("Broadcast channel full for room %s", roomID[:8])
+		h.Logger.Warn("Broadcast channel full for room", zap.String("room", roomID[:8]))
 	}
 }
 
